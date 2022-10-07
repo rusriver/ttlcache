@@ -265,7 +265,7 @@ func Test_Cache_set(t *testing.T) {
 				total++
 			}
 
-			item := cache.set(c.Key, "value123", c.TTL)
+			item := cache.set(c.Key, "value123", c.TTL, true)
 
 			if c.ExpectFns {
 				assert.Equal(t, 2, insertFnsCalls)

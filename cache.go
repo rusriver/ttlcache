@@ -126,7 +126,7 @@ func (c *Cache[K, V]) updateExpirations(fresh bool, elem *list.Element) {
 
 // set creates a new item, adds it to the cache and then returns it.
 // Not concurrently safe.
-func (c *Cache[K, V]) set(key K, value V, ttl time.Duration) *Item[K, V] {
+func (c *Cache[K, V]) set(key K, value V, ttl time.Duration, touch bool) *Item[K, V] {
 	if ttl == DefaultTTL {
 		ttl = c.options.ttl
 	}
@@ -136,7 +136,9 @@ func (c *Cache[K, V]) set(key K, value V, ttl time.Duration) *Item[K, V] {
 		// update/overwrite an existing item
 		item := elem.Value.(*Item[K, V])
 		item.update(value, ttl)
-		c.updateExpirations(false, elem)
+		if touch {
+			c.updateExpirations(false, elem)
+		}
 
 		return item
 	}
@@ -242,7 +244,18 @@ func (c *Cache[K, V]) Set(key K, value V, ttl time.Duration) *Item[K, V] {
 	c.items.mu.Lock()
 	defer c.items.mu.Unlock()
 
-	return c.set(key, value, ttl)
+	return c.set(key, value, ttl, true)
+}
+
+// Set creates a new item from the provided key and value, adds
+// it to the cache and then returns it. If an item associated with the
+// provided key already exists, the new item overwrites the existing one.
+// DOES NOT UPDATE EXPIRATIONS
+func (c *Cache[K, V]) SetDontTouch(key K, value V, ttl time.Duration) *Item[K, V] {
+	c.items.mu.Lock()
+	defer c.items.mu.Unlock()
+
+	return c.set(key, value, ttl, false)
 }
 
 // Get retrieves an item from the cache by the provided key.
