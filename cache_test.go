@@ -19,7 +19,7 @@ func TestMain(m *testing.M) {
 }
 
 func Test_New(t *testing.T) {
-	c := New[string, string](
+	c := New(
 		WithTTL[string, string](time.Hour),
 		WithCapacity[string, string](1),
 	)
