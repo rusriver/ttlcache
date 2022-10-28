@@ -138,7 +138,7 @@ func (c *Cache[K, V]) Get(key K, opts ...Option[K, V]) *Item[K, V] {
 	return elem.Value.(*Item[K, V])
 }
 
-func (c *Cache[K, V]) Transaction(key K, f func(c *Cache[K, V])) {
+func (c *Cache[K, V]) Transaction(f func(c *Cache[K, V])) {
 	if !c.options.lockingFromOutside {
 		c.CacheItems.Mu.Lock()
 	}
