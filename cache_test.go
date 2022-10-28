@@ -185,14 +185,10 @@ func Test_Cache_set(t *testing.T) {
 			Key: existingKey,
 			TTL: NoTTL,
 		},
-		"Set with existing key and DefaultTTL": {
-			Key: existingKey,
-			TTL: DefaultTTL,
-		},
 		"Set with new key and eviction caused by small capacity": {
 			Capacity: 3,
 			Key:      newKey,
-			TTL:      DefaultTTL,
+			TTL:      0,
 			Metrics: Metrics{
 				Insertions: 1,
 				Evictions:  1,
@@ -202,7 +198,7 @@ func Test_Cache_set(t *testing.T) {
 		"Set with new key and no eviction caused by large capacity": {
 			Capacity: 10,
 			Key:      newKey,
-			TTL:      DefaultTTL,
+			TTL:      0,
 			Metrics: Metrics{
 				Insertions: 1,
 			},
@@ -226,7 +222,7 @@ func Test_Cache_set(t *testing.T) {
 		},
 		"Set with new key and DefaultTTL": {
 			Key: newKey,
-			TTL: DefaultTTL,
+			TTL: 0,
 			Metrics: Metrics{
 				Insertions: 1,
 			},
@@ -287,11 +283,11 @@ func Test_Cache_set(t *testing.T) {
 			}
 
 			switch {
-			case c.TTL == DefaultTTL:
+			case c.TTL == 0:
 				assert.Equal(t, cache.options.ttl, item.ttl)
 				assert.WithinDuration(t, time.Now(), item.expiresAt, cache.options.ttl)
 				assert.Equal(t, c.Key, cache.CacheItems.expQueue[0].Value.(*Item[string, string]).key)
-			case c.TTL > DefaultTTL:
+			case c.TTL > 0:
 				assert.Equal(t, c.TTL, item.ttl)
 				assert.WithinDuration(t, time.Now(), item.expiresAt, c.TTL)
 				assert.Equal(t, c.Key, cache.CacheItems.expQueue[0].Value.(*Item[string, string]).key)
@@ -435,11 +431,11 @@ func Test_Cache_evict(t *testing.T) {
 
 func Test_Cache_Set(t *testing.T) {
 	cache := prepCache(time.Hour, "test1", "test2", "test3")
-	item := cache.Set("hello", "value123", time.Minute)
+	item := cache.SetWithTTL("hello", "value123", time.Minute)
 	require.NotNil(t, item)
 	assert.Same(t, item, cache.CacheItems.values["hello"].Value)
 
-	item = cache.Set("test1", "value123", time.Minute)
+	item = cache.SetWithTTL("test1", "value123", time.Minute)
 	require.NotNil(t, item)
 	assert.Same(t, item, cache.CacheItems.values["test1"].Value)
 }

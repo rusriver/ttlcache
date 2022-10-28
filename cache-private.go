@@ -58,10 +58,6 @@ func (c *Cache[K, V]) updateExpirations(fresh bool, elem *list.Element) {
 // set creates a new item, adds it to the cache and then returns it.
 // Not concurrently safe.
 func (c *Cache[K, V]) set(key K, value V, ttl time.Duration, touch bool) *Item[K, V] {
-	if ttl == DefaultTTL {
-		ttl = c.options.ttl
-	}
-
 	elem := c.get(key, false)
 	if elem != nil {
 		// update/overwrite an existing item

@@ -8,10 +8,6 @@ import (
 const (
 	// NoTTL indicates that an item should never expire.
 	NoTTL time.Duration = -1
-
-	// DefaultTTL indicates that the default TTL
-	// value should be used.
-	DefaultTTL time.Duration = 0
 )
 
 // Item holds all the information that is associated with a single

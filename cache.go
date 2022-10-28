@@ -77,7 +77,19 @@ func New[K comparable, V any](opts ...Option[K, V]) *Cache[K, V] {
 // Set creates a new item from the provided key and value, adds
 // it to the cache and then returns it. If an item associated with the
 // provided key already exists, the new item overwrites the existing one.
-func (c *Cache[K, V]) Set(key K, value V, ttl time.Duration) *Item[K, V] {
+func (c *Cache[K, V]) Set(key K, value V) *Item[K, V] {
+	if !c.options.lockingFromOutside {
+		c.CacheItems.Mu.Lock()
+		defer c.CacheItems.Mu.Unlock()
+	}
+
+	return c.set(key, value, c.options.ttl, true)
+}
+
+// Set creates a new item from the provided key and value, adds
+// it to the cache and then returns it. If an item associated with the
+// provided key already exists, the new item overwrites the existing one.
+func (c *Cache[K, V]) SetWithTTL(key K, value V, ttl time.Duration) *Item[K, V] {
 	if !c.options.lockingFromOutside {
 		c.CacheItems.Mu.Lock()
 		defer c.CacheItems.Mu.Unlock()
