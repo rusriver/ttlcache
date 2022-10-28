@@ -17,10 +17,11 @@ func (fn optionFunc[K, V]) apply(opts *options[K, V]) {
 
 // options holds all available cache configuration options.
 type options[K comparable, V any] struct {
-	capacity          uint64
-	ttl               time.Duration
-	loader            Loader[K, V]
-	disableTouchOnHit bool
+	capacity           uint64
+	ttl                time.Duration
+	loader             Loader[K, V]
+	disableTouchOnHit  bool
+	lockingFromOutside bool
 }
 
 // applyOptions applies the provided option values to the option struct.
@@ -63,5 +64,15 @@ func WithLoader[K comparable, V any](l Loader[K, V]) Option[K, V] {
 func WithDisableTouchOnHit[K comparable, V any]() Option[K, V] {
 	return optionFunc[K, V](func(opts *options[K, V]) {
 		opts.disableTouchOnHit = true
+	})
+}
+
+// With this set, the cache becomes thread-unsafe, and must be locked
+// explicitly from outside. This is useful when external goroutine wrapper
+// need to do atomic read-update transactions on values.
+// NOTE: though you can use this, maybe you need to instead use the Transaction() method.
+func WithLockingFromOutside[K comparable, V any]() Option[K, V] {
+	return optionFunc[K, V](func(opts *options[K, V]) {
+		opts.lockingFromOutside = true
 	})
 }

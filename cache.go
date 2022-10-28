@@ -24,8 +24,8 @@ type EvictionReason int
 // Cache is a synchronised map of items that are automatically removed
 // when they expire or the capacity is reached.
 type Cache[K comparable, V any] struct {
-	items struct {
-		mu     sync.RWMutex
+	CacheItems struct {
+		Mu     sync.RWMutex
 		values map[K]*list.Element
 
 		// a generic doubly linked list would be more convenient
@@ -62,10 +62,10 @@ func New[K comparable, V any](opts ...Option[K, V]) *Cache[K, V] {
 	c := &Cache[K, V]{
 		stopCh: make(chan struct{}),
 	}
-	c.items.values = make(map[K]*list.Element)
-	c.items.lru = list.New()
-	c.items.expQueue = newExpirationQueue[K, V]()
-	c.items.timerCh = make(chan time.Duration, 1) // buffer is important
+	c.CacheItems.values = make(map[K]*list.Element)
+	c.CacheItems.lru = list.New()
+	c.CacheItems.expQueue = newExpirationQueue[K, V]()
+	c.CacheItems.timerCh = make(chan time.Duration, 1) // buffer is important
 	c.events.insertion.fns = make(map[uint64]func(*Item[K, V]))
 	c.events.eviction.fns = make(map[uint64]func(EvictionReason, *Item[K, V]))
 
@@ -74,175 +74,14 @@ func New[K comparable, V any](opts ...Option[K, V]) *Cache[K, V] {
 	return c
 }
 
-// updateExpirations updates the expiration queue and notifies
-// the cache auto cleaner if needed.
-// Not concurrently safe.
-func (c *Cache[K, V]) updateExpirations(fresh bool, elem *list.Element) {
-	var oldExpiresAt time.Time
-
-	if !c.items.expQueue.isEmpty() {
-		oldExpiresAt = c.items.expQueue[0].Value.(*Item[K, V]).expiresAt
-	}
-
-	if fresh {
-		c.items.expQueue.push(elem)
-	} else {
-		c.items.expQueue.update(elem)
-	}
-
-	newExpiresAt := c.items.expQueue[0].Value.(*Item[K, V]).expiresAt
-
-	// check if the closest/soonest expiration timestamp changed
-	if newExpiresAt.IsZero() || (!oldExpiresAt.IsZero() && !newExpiresAt.Before(oldExpiresAt)) {
-		return
-	}
-
-	d := time.Until(newExpiresAt)
-
-	// It's possible that the auto cleaner isn't active or
-	// is busy, so we need to drain the channel before
-	// sending a new value.
-	// Also, since this method is called after locking the items' mutex,
-	// we can be sure that there is no other concurrent call of this
-	// method
-	if len(c.items.timerCh) > 0 {
-		// we need to drain this channel in a select with a default
-		// case because it's possible that the auto cleaner
-		// read this channel just after we entered this if
-		select {
-		case d1 := <-c.items.timerCh:
-			if d1 < d {
-				d = d1
-			}
-		default:
-		}
-	}
-
-	// since the channel has a size 1 buffer, we can be sure
-	// that the line below won't block (we can't overfill the buffer
-	// because we just drained it)
-	c.items.timerCh <- d
-}
-
-// set creates a new item, adds it to the cache and then returns it.
-// Not concurrently safe.
-func (c *Cache[K, V]) set(key K, value V, ttl time.Duration, touch bool) *Item[K, V] {
-	if ttl == DefaultTTL {
-		ttl = c.options.ttl
-	}
-
-	elem := c.get(key, false)
-	if elem != nil {
-		// update/overwrite an existing item
-		item := elem.Value.(*Item[K, V])
-		item.update(value, ttl)
-		if touch {
-			c.updateExpirations(false, elem)
-		}
-
-		return item
-	}
-
-	if c.options.capacity != 0 && uint64(len(c.items.values)) >= c.options.capacity {
-		// delete the oldest item
-		c.evict(EvictionReasonCapacityReached, c.items.lru.Back())
-	}
-
-	// create a new item
-	item := newItem(key, value, ttl)
-	elem = c.items.lru.PushFront(item)
-	c.items.values[key] = elem
-	c.updateExpirations(true, elem)
-
-	c.metricsMu.Lock()
-	c.metrics.Insertions++
-	c.metricsMu.Unlock()
-
-	c.events.insertion.mu.RLock()
-	for _, fn := range c.events.insertion.fns {
-		fn(item)
-	}
-	c.events.insertion.mu.RUnlock()
-
-	return item
-}
-
-// get retrieves an item from the cache and extends its expiration
-// time if 'touch' is set to true.
-// It returns nil if the item is not found or is expired.
-// Not concurrently safe.
-func (c *Cache[K, V]) get(key K, touch bool) *list.Element {
-	elem := c.items.values[key]
-	if elem == nil {
-		return nil
-	}
-
-	item := elem.Value.(*Item[K, V])
-	if item.isExpiredUnsafe() {
-		return nil
-	}
-
-	c.items.lru.MoveToFront(elem)
-
-	if touch && item.ttl > 0 {
-		item.touch()
-		c.updateExpirations(false, elem)
-	}
-
-	return elem
-}
-
-// evict deletes items from the cache.
-// If no items are provided, all currently present cache items
-// are evicted.
-// Not concurrently safe.
-func (c *Cache[K, V]) evict(reason EvictionReason, elems ...*list.Element) {
-	if len(elems) > 0 {
-		c.metricsMu.Lock()
-		c.metrics.Evictions += uint64(len(elems))
-		c.metricsMu.Unlock()
-
-		c.events.eviction.mu.RLock()
-		for i := range elems {
-			item := elems[i].Value.(*Item[K, V])
-			delete(c.items.values, item.key)
-			c.items.lru.Remove(elems[i])
-			c.items.expQueue.remove(elems[i])
-
-			for _, fn := range c.events.eviction.fns {
-				fn(reason, item)
-			}
-		}
-		c.events.eviction.mu.RUnlock()
-
-		return
-	}
-
-	c.metricsMu.Lock()
-	c.metrics.Evictions += uint64(len(c.items.values))
-	c.metricsMu.Unlock()
-
-	c.events.eviction.mu.RLock()
-	for _, elem := range c.items.values {
-		item := elem.Value.(*Item[K, V])
-
-		for _, fn := range c.events.eviction.fns {
-			fn(reason, item)
-		}
-	}
-	c.events.eviction.mu.RUnlock()
-
-	c.items.values = make(map[K]*list.Element)
-	c.items.lru.Init()
-	c.items.expQueue = newExpirationQueue[K, V]()
-}
-
 // Set creates a new item from the provided key and value, adds
 // it to the cache and then returns it. If an item associated with the
 // provided key already exists, the new item overwrites the existing one.
 func (c *Cache[K, V]) Set(key K, value V, ttl time.Duration) *Item[K, V] {
-	c.items.mu.Lock()
-	defer c.items.mu.Unlock()
+	if !c.options.lockingFromOutside {
+		c.CacheItems.Mu.Lock()
+		defer c.CacheItems.Mu.Unlock()
+	}
 
 	return c.set(key, value, ttl, true)
 }
@@ -252,8 +91,10 @@ func (c *Cache[K, V]) Set(key K, value V, ttl time.Duration) *Item[K, V] {
 // provided key already exists, the new item overwrites the existing one.
 // DOES NOT UPDATE EXPIRATIONS
 func (c *Cache[K, V]) SetDontTouch(key K, value V, ttl time.Duration) *Item[K, V] {
-	c.items.mu.Lock()
-	defer c.items.mu.Unlock()
+	if !c.options.lockingFromOutside {
+		c.CacheItems.Mu.Lock()
+		defer c.CacheItems.Mu.Unlock()
+	}
 
 	return c.set(key, value, ttl, false)
 }
@@ -270,9 +111,13 @@ func (c *Cache[K, V]) Get(key K, opts ...Option[K, V]) *Item[K, V] {
 
 	applyOptions(&getOpts, opts...)
 
-	c.items.mu.Lock()
+	if !c.options.lockingFromOutside {
+		c.CacheItems.Mu.Lock()
+	}
 	elem := c.get(key, !getOpts.disableTouchOnHit)
-	c.items.mu.Unlock()
+	if !c.options.lockingFromOutside {
+		c.CacheItems.Mu.Unlock()
+	}
 
 	if elem == nil {
 		c.metricsMu.Lock()
@@ -293,13 +138,25 @@ func (c *Cache[K, V]) Get(key K, opts ...Option[K, V]) *Item[K, V] {
 	return elem.Value.(*Item[K, V])
 }
 
+func (c *Cache[K, V]) Transaction(key K, f func(c *Cache[K, V])) {
+	if !c.options.lockingFromOutside {
+		c.CacheItems.Mu.Lock()
+	}
+	f(c)
+	if !c.options.lockingFromOutside {
+		c.CacheItems.Mu.Unlock()
+	}
+}
+
 // Delete deletes an item from the cache. If the item associated with
 // the key is not found, the method is no-op.
 func (c *Cache[K, V]) Delete(key K) {
-	c.items.mu.Lock()
-	defer c.items.mu.Unlock()
+	if !c.options.lockingFromOutside {
+		c.CacheItems.Mu.Lock()
+		defer c.CacheItems.Mu.Unlock()
+	}
 
-	elem := c.items.values[key]
+	elem := c.CacheItems.values[key]
 	if elem == nil {
 		return
 	}
@@ -309,30 +166,36 @@ func (c *Cache[K, V]) Delete(key K) {
 
 // DeleteAll deletes all items from the cache.
 func (c *Cache[K, V]) DeleteAll() {
-	c.items.mu.Lock()
+	if !c.options.lockingFromOutside {
+		c.CacheItems.Mu.Lock()
+	}
 	c.evict(EvictionReasonDeleted)
-	c.items.mu.Unlock()
+	if !c.options.lockingFromOutside {
+		c.CacheItems.Mu.Unlock()
+	}
 }
 
 // DeleteExpired deletes all expired items from the cache.
 func (c *Cache[K, V]) DeleteExpired() {
-	c.items.mu.Lock()
-	defer c.items.mu.Unlock()
+	if !c.options.lockingFromOutside {
+		c.CacheItems.Mu.Lock()
+		defer c.CacheItems.Mu.Unlock()
+	}
 
-	if c.items.expQueue.isEmpty() {
+	if c.CacheItems.expQueue.isEmpty() {
 		return
 	}
 
-	e := c.items.expQueue[0]
+	e := c.CacheItems.expQueue[0]
 	for e.Value.(*Item[K, V]).isExpiredUnsafe() {
 		c.evict(EvictionReasonExpired, e)
 
-		if c.items.expQueue.isEmpty() {
+		if c.CacheItems.expQueue.isEmpty() {
 			break
 		}
 
 		// expiration queue has a new root
-		e = c.items.expQueue[0]
+		e = c.CacheItems.expQueue[0]
 	}
 }
 
@@ -340,26 +203,30 @@ func (c *Cache[K, V]) DeleteExpired() {
 // Its main purpose is to extend an item's expiration timestamp.
 // If the item is not found, the method is no-op.
 func (c *Cache[K, V]) Touch(key K) {
-	c.items.mu.Lock()
+	if !c.options.lockingFromOutside {
+		c.CacheItems.Mu.Lock()
+	}
 	c.get(key, true)
-	c.items.mu.Unlock()
+	if !c.options.lockingFromOutside {
+		c.CacheItems.Mu.Unlock()
+	}
 }
 
 // Len returns the number of items in the cache.
 func (c *Cache[K, V]) Len() int {
-	c.items.mu.RLock()
-	defer c.items.mu.RUnlock()
+	c.CacheItems.Mu.RLock()
+	defer c.CacheItems.Mu.RUnlock()
 
-	return len(c.items.values)
+	return len(c.CacheItems.values)
 }
 
 // Keys returns all keys currently present in the cache.
 func (c *Cache[K, V]) Keys() []K {
-	c.items.mu.RLock()
-	defer c.items.mu.RUnlock()
+	c.CacheItems.Mu.RLock()
+	defer c.CacheItems.Mu.RUnlock()
 
-	res := make([]K, 0, len(c.items.values))
-	for k := range c.items.values {
+	res := make([]K, 0, len(c.CacheItems.values))
+	for k := range c.CacheItems.values {
 		res = append(res, k)
 	}
 
@@ -369,11 +236,11 @@ func (c *Cache[K, V]) Keys() []K {
 // Items returns a copy of all items in the cache.
 // It does not update any expiration timestamps.
 func (c *Cache[K, V]) Items() map[K]*Item[K, V] {
-	c.items.mu.RLock()
-	defer c.items.mu.RUnlock()
+	c.CacheItems.Mu.RLock()
+	defer c.CacheItems.Mu.RUnlock()
 
-	items := make(map[K]*Item[K, V], len(c.items.values))
-	for k := range c.items.values {
+	items := make(map[K]*Item[K, V], len(c.CacheItems.values))
+	for k := range c.CacheItems.values {
 		item := c.get(k, false)
 		if item != nil {
 			items[k] = item.Value.(*Item[K, V])
@@ -396,12 +263,12 @@ func (c *Cache[K, V]) Metrics() Metrics {
 // It blocks until Stop is called.
 func (c *Cache[K, V]) Start() {
 	waitDur := func() time.Duration {
-		c.items.mu.RLock()
-		defer c.items.mu.RUnlock()
+		c.CacheItems.Mu.RLock()
+		defer c.CacheItems.Mu.RUnlock()
 
-		if !c.items.expQueue.isEmpty() &&
-			!c.items.expQueue[0].Value.(*Item[K, V]).expiresAt.IsZero() {
-			d := time.Until(c.items.expQueue[0].Value.(*Item[K, V]).expiresAt)
+		if !c.CacheItems.expQueue.isEmpty() &&
+			!c.CacheItems.expQueue[0].Value.(*Item[K, V]).expiresAt.IsZero() {
+			d := time.Until(c.CacheItems.expQueue[0].Value.(*Item[K, V]).expiresAt)
 			if d <= 0 {
 				// execute immediately
 				return time.Microsecond
@@ -434,7 +301,7 @@ func (c *Cache[K, V]) Start() {
 		select {
 		case <-c.stopCh:
 			return
-		case d := <-c.items.timerCh:
+		case d := <-c.CacheItems.timerCh:
 			stop()
 			timer.Reset(d)
 		case <-timer.C:
