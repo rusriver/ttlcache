@@ -164,13 +164,19 @@ func (c *Cache[K, V]) Get(key K, opts ...Option[K, V]) *Item[K, V] {
 }
 
 func (c *Cache[K, V]) Transaction(f func(c *Cache[K, V])) {
+	lfoSaved := c.options.lockingFromOutside
+
 	if !c.options.lockingFromOutside {
+		c.options.lockingFromOutside = true // prevent locks from inside the transaction
 		c.CacheItems.Mu.Lock()
+		defer c.CacheItems.Mu.Unlock()
+	} else {
+		// expecting already been locked from outside
 	}
+
 	f(c)
-	if !c.options.lockingFromOutside {
-		c.CacheItems.Mu.Unlock()
-	}
+
+	c.options.lockingFromOutside = lfoSaved
 }
 
 // Delete deletes an item from the cache. If the item associated with
