@@ -124,7 +124,7 @@ func (c *Cache[K, V]) SetWithTTLDontTouch(key K, value V, ttl time.Duration) *It
 // Get retrieves an item from the cache by the provided key.
 // Unless this is disabled, it also extends/touches an item's
 // expiration timestamp on successful retrieval.
-// If the item is not found, a nil value is returned.
+// It returns nil if the item is not found or is expired.
 func (c *Cache[K, V]) Get(key K, opts ...Option[K, V]) *Item[K, V] {
 	getOpts := options[K, V]{
 		loader:            c.options.loader,
@@ -136,20 +136,52 @@ func (c *Cache[K, V]) Get(key K, opts ...Option[K, V]) *Item[K, V] {
 	if !c.options.lockingDisabledForTransaction {
 		c.CacheItems.Mu.Lock()
 	}
-	elem := c.get(key, !getOpts.disableTouchOnHit)
+	elem, isExpired := c.get(key, !getOpts.disableTouchOnHit)
+	if !c.options.lockingDisabledForTransaction {
+		c.CacheItems.Mu.Unlock()
+	}
+
+	if elem == nil || isExpired {
+		if getOpts.loader != nil {
+			return getOpts.loader.Load(c, key)
+			// TODO: shouldn't we also set it automatically? I think yes
+		}
+		return nil
+	}
+	return elem.Value.(*Item[K, V])
+}
+
+// Get retrieves an item from the cache by the provided key.
+// Unless this is disabled, it also extends/touches an item's
+// expiration timestamp on successful retrieval.
+// If the item is not found, a nil value is returned, BUT if it is still present but expired,
+// you still get it. If it's expired, you can check by flag.
+// Also, this version of Get is faster, because it lacks options.
+func (c *Cache[K, V]) Get2(key K) (item *Item[K, V], isExpired bool) {
+	getOpts := options[K, V]{
+		loader:            c.options.loader,
+		disableTouchOnHit: c.options.disableTouchOnHit,
+	}
+
+	if !c.options.lockingDisabledForTransaction {
+		c.CacheItems.Mu.Lock()
+	}
+
+	var elem *list.Element
+	elem, isExpired = c.get(key, !getOpts.disableTouchOnHit)
+
 	if !c.options.lockingDisabledForTransaction {
 		c.CacheItems.Mu.Unlock()
 	}
 
 	if elem == nil {
 		if getOpts.loader != nil {
-			return getOpts.loader.Load(c, key)
+			return getOpts.loader.Load(c, key), isExpired
+			// TODO: shouldn't we also set it automatically? I think yes
 		}
-
-		return nil
+		return nil, isExpired
 	}
-
-	return elem.Value.(*Item[K, V])
+	return elem.Value.(*Item[K, V]), isExpired
 }
 
 func (c *Cache[K, V]) Transaction(f func(c *Cache[K, V])) {
@@ -254,8 +286,8 @@ func (c *Cache[K, V]) Items() map[K]*Item[K, V] {
 
 	items := make(map[K]*Item[K, V], len(c.CacheItems.values))
 	for k := range c.CacheItems.values {
-		item := c.get(k, false)
-		if item != nil {
+		item, isExpired := c.get(k, false)
+		if item != nil && !isExpired {
 			items[k] = item.Value.(*Item[K, V])
 		}
 	}

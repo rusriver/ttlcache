@@ -58,7 +58,7 @@ func (c *Cache[K, V]) updateExpirations(fresh bool, elem *list.Element) {
 // set creates a new item, adds it to the cache and then returns it.
 // Not concurrently safe.
 func (c *Cache[K, V]) set(key K, value V, ttl time.Duration, touch bool) *Item[K, V] {
-	elem := c.get(key, false)
+	elem, _ := c.get(key, false)
 	if elem != nil {
 		// update/overwrite an existing item
 		item := elem.Value.(*Item[K, V])
@@ -94,15 +94,15 @@ func (c *Cache[K, V]) set(key K, value V, ttl time.Duration, touch bool) *Item[K
 // time if 'touch' is set to true.
 // It returns nil if the item is not found or is expired.
 // Not concurrently safe.
-func (c *Cache[K, V]) get(key K, touch bool) *list.Element {
-	elem := c.CacheItems.values[key]
+func (c *Cache[K, V]) get(key K, touch bool) (elem *list.Element, isExpired bool) {
+	elem = c.CacheItems.values[key]
 	if elem == nil {
-		return nil
+		return nil, false
 	}
 
 	item := elem.Value.(*Item[K, V])
 	if item.isExpiredUnsafe() {
-		return nil
+		return elem, true
 	}
 
 	c.CacheItems.lru.MoveToFront(elem)
@@ -112,7 +112,7 @@ func (c *Cache[K, V]) get(key K, touch bool) *list.Element {
 		c.updateExpirations(false, elem)
 	}
 
-	return elem
+	return elem, false
 }
 
 // evict deletes items from the cache.
