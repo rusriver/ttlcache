@@ -37,9 +37,6 @@ type Cache[K comparable, V any] struct {
 		timerCh chan time.Duration
 	}
 
-	metricsMu sync.RWMutex
-	metrics   Metrics
-
 	events struct {
 		insertion struct {
 			mu     sync.RWMutex
@@ -145,20 +142,12 @@ func (c *Cache[K, V]) Get(key K, opts ...Option[K, V]) *Item[K, V] {
 	}
 
 	if elem == nil {
-		c.metricsMu.Lock()
-		c.metrics.Misses++
-		c.metricsMu.Unlock()
-
 		if getOpts.loader != nil {
 			return getOpts.loader.Load(c, key)
 		}
 
 		return nil
 	}
-
-	c.metricsMu.Lock()
-	c.metrics.Hits++
-	c.metricsMu.Unlock()
 
 	return elem.Value.(*Item[K, V])
 }
@@ -272,14 +261,6 @@ func (c *Cache[K, V]) Items() map[K]*Item[K, V] {
 	}
 
 	return items
-}
-
-// Metrics returns the metrics of the cache.
-func (c *Cache[K, V]) Metrics() Metrics {
-	c.metricsMu.RLock()
-	defer c.metricsMu.RUnlock()
-
-	return c.metrics
 }
 
 // Start starts an automatic cleanup process that

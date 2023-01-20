@@ -81,10 +81,6 @@ func (c *Cache[K, V]) set(key K, value V, ttl time.Duration, touch bool) *Item[K
 	c.CacheItems.values[key] = elem
 	c.updateExpirations(true, elem)
 
-	c.metricsMu.Lock()
-	c.metrics.Insertions++
-	c.metricsMu.Unlock()
-
 	c.events.insertion.mu.RLock()
 	for _, fn := range c.events.insertion.fns {
 		fn(item)
@@ -125,10 +121,6 @@ func (c *Cache[K, V]) get(key K, touch bool) *list.Element {
 // Not concurrently safe.
 func (c *Cache[K, V]) evict(reason EvictionReason, elems ...*list.Element) {
 	if len(elems) > 0 {
-		c.metricsMu.Lock()
-		c.metrics.Evictions += uint64(len(elems))
-		c.metricsMu.Unlock()
-
 		c.events.eviction.mu.RLock()
 		for i := range elems {
 			item := elems[i].Value.(*Item[K, V])
@@ -144,10 +136,6 @@ func (c *Cache[K, V]) evict(reason EvictionReason, elems ...*list.Element) {
 
 		return
 	}
-
-	c.metricsMu.Lock()
-	c.metrics.Evictions += uint64(len(c.CacheItems.values))
-	c.metricsMu.Unlock()
 
 	c.events.eviction.mu.RLock()
 	for _, elem := range c.CacheItems.values {
