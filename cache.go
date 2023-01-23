@@ -136,12 +136,12 @@ func (c *Cache[K, V]) Get(key K, opts ...Option[K, V]) *Item[K, V] {
 	if !c.options.lockingDisabledForTransaction {
 		c.CacheItems.Mu.Lock()
 	}
-	elem, isExpired := c.get(key, !getOpts.disableTouchOnHit)
+	elem, isExistAndExpired := c.get(key, !getOpts.disableTouchOnHit)
 	if !c.options.lockingDisabledForTransaction {
 		c.CacheItems.Mu.Unlock()
 	}
 
-	if elem == nil || isExpired {
+	if elem == nil || isExistAndExpired {
 		if getOpts.loader != nil {
 			return getOpts.loader.Load(c, key)
 			// TODO: shouldn't we also set it automatically? I think yes
@@ -157,7 +157,7 @@ func (c *Cache[K, V]) Get(key K, opts ...Option[K, V]) *Item[K, V] {
 // If the item is not found, a nil value is returned, BUT if it is still present but expired,
 // you still get it. If it's expired, you can check by flag.
 // Also, this version of Get is faster, because it lacks options.
-func (c *Cache[K, V]) Get2(key K) (item *Item[K, V], isExpired bool) {
+func (c *Cache[K, V]) Get2(key K) (item *Item[K, V], isExistAndExpired bool) {
 	getOpts := options[K, V]{
 		loader:            c.options.loader,
 		disableTouchOnHit: c.options.disableTouchOnHit,
@@ -168,7 +168,7 @@ func (c *Cache[K, V]) Get2(key K) (item *Item[K, V], isExpired bool) {
 	}
 
 	var elem *list.Element
-	elem, isExpired = c.get(key, !getOpts.disableTouchOnHit)
+	elem, isExistAndExpired = c.get(key, !getOpts.disableTouchOnHit)
 
 	if !c.options.lockingDisabledForTransaction {
 		c.CacheItems.Mu.Unlock()
@@ -176,12 +176,12 @@ func (c *Cache[K, V]) Get2(key K) (item *Item[K, V], isExpired bool) {
 
 	if elem == nil {
 		if getOpts.loader != nil {
-			return getOpts.loader.Load(c, key), isExpired
+			return getOpts.loader.Load(c, key), isExistAndExpired
 			// TODO: shouldn't we also set it automatically? I think yes
 		}
-		return nil, isExpired
+		return nil, isExistAndExpired
 	}
-	return elem.Value.(*Item[K, V]), isExpired
+	return elem.Value.(*Item[K, V]), isExistAndExpired
 }
 
 func (c *Cache[K, V]) Transaction(f func(c *Cache[K, V])) {
@@ -286,8 +286,8 @@ func (c *Cache[K, V]) Items() map[K]*Item[K, V] {
 
 	items := make(map[K]*Item[K, V], len(c.CacheItems.values))
 	for k := range c.CacheItems.values {
-		item, isExpired := c.get(k, false)
-		if item != nil && !isExpired {
+		item, isExistAndExpired := c.get(k, false)
+		if item != nil && !isExistAndExpired {
 			items[k] = item.Value.(*Item[K, V])
 		}
 	}

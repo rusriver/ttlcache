@@ -94,7 +94,7 @@ func (c *Cache[K, V]) set(key K, value V, ttl time.Duration, touch bool) *Item[K
 // time if 'touch' is set to true.
 // It returns nil if the item is not found or is expired.
 // Not concurrently safe.
-func (c *Cache[K, V]) get(key K, touch bool) (elem *list.Element, isExpired bool) {
+func (c *Cache[K, V]) get(key K, touch bool) (elem *list.Element, isExistAndExpired bool) {
 	elem = c.CacheItems.values[key]
 	if elem == nil {
 		return nil, false
