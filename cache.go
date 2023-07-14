@@ -75,7 +75,7 @@ func New[K comparable, V any](opts ...Option[K, V]) *Cache[K, V] {
 // it to the cache and then returns it. If an item associated with the
 // provided key already exists, the new item overwrites the existing one.
 func (c *Cache[K, V]) Set(key K, value V) *Item[K, V] {
-	if !c.options.lockingDisabledForTransaction {
+	if !c.options.locklessWhileInTransaction {
 		c.CacheItems.Mu.Lock()
 		defer c.CacheItems.Mu.Unlock()
 	}
@@ -87,7 +87,7 @@ func (c *Cache[K, V]) Set(key K, value V) *Item[K, V] {
 // it to the cache and then returns it. If an item associated with the
 // provided key already exists, the new item overwrites the existing one.
 func (c *Cache[K, V]) SetWithTTL(key K, value V, ttl time.Duration) *Item[K, V] {
-	if !c.options.lockingDisabledForTransaction {
+	if !c.options.locklessWhileInTransaction {
 		c.CacheItems.Mu.Lock()
 		defer c.CacheItems.Mu.Unlock()
 	}
@@ -100,7 +100,7 @@ func (c *Cache[K, V]) SetWithTTL(key K, value V, ttl time.Duration) *Item[K, V] 
 // provided key already exists, the new item overwrites the existing one.
 // DOES NOT UPDATE EXPIRATIONS
 func (c *Cache[K, V]) SetDontTouch(key K, value V) *Item[K, V] {
-	if !c.options.lockingDisabledForTransaction {
+	if !c.options.locklessWhileInTransaction {
 		c.CacheItems.Mu.Lock()
 		defer c.CacheItems.Mu.Unlock()
 	}
@@ -113,7 +113,7 @@ func (c *Cache[K, V]) SetDontTouch(key K, value V) *Item[K, V] {
 // provided key already exists, the new item overwrites the existing one.
 // DOES NOT UPDATE EXPIRATIONS
 func (c *Cache[K, V]) SetWithTTLDontTouch(key K, value V, ttl time.Duration) *Item[K, V] {
-	if !c.options.lockingDisabledForTransaction {
+	if !c.options.locklessWhileInTransaction {
 		c.CacheItems.Mu.Lock()
 		defer c.CacheItems.Mu.Unlock()
 	}
@@ -133,11 +133,11 @@ func (c *Cache[K, V]) Get(key K, opts ...Option[K, V]) *Item[K, V] {
 
 	applyOptions(&getOpts, opts...)
 
-	if !c.options.lockingDisabledForTransaction {
+	if !c.options.locklessWhileInTransaction {
 		c.CacheItems.Mu.Lock()
 	}
 	elem, isExistAndExpired := c.get(key, !getOpts.disableTouchOnHit)
-	if !c.options.lockingDisabledForTransaction {
+	if !c.options.locklessWhileInTransaction {
 		c.CacheItems.Mu.Unlock()
 	}
 
@@ -163,14 +163,14 @@ func (c *Cache[K, V]) Get2(key K) (item *Item[K, V], isExistAndExpired bool) {
 		disableTouchOnHit: c.options.disableTouchOnHit,
 	}
 
-	if !c.options.lockingDisabledForTransaction {
+	if !c.options.locklessWhileInTransaction {
 		c.CacheItems.Mu.Lock()
 	}
 
 	var elem *list.Element
 	elem, isExistAndExpired = c.get(key, !getOpts.disableTouchOnHit)
 
-	if !c.options.lockingDisabledForTransaction {
+	if !c.options.locklessWhileInTransaction {
 		c.CacheItems.Mu.Unlock()
 	}
 
@@ -184,19 +184,19 @@ func (c *Cache[K, V]) Get2(key K) (item *Item[K, V], isExistAndExpired bool) {
 	return elem.Value.(*Item[K, V]), isExistAndExpired
 }
 
-func (c *Cache[K, V]) Transaction(f func(c *Cache[K, V])) {
+func (c *Cache[K, V]) Transaction(transactionFunc func(c *Cache[K, V])) {
 	c.CacheItems.Mu.Lock()
 	defer c.CacheItems.Mu.Unlock()
-	c.options.lockingDisabledForTransaction = true
-	defer func() { c.options.lockingDisabledForTransaction = false }()
+	c.options.locklessWhileInTransaction = true
+	defer func() { c.options.locklessWhileInTransaction = false }()
 
-	f(c)
+	transactionFunc(c)
 }
 
 // Delete deletes an item from the cache. If the item associated with
 // the key is not found, the method is no-op.
 func (c *Cache[K, V]) Delete(key K) {
-	if !c.options.lockingDisabledForTransaction {
+	if !c.options.locklessWhileInTransaction {
 		c.CacheItems.Mu.Lock()
 		defer c.CacheItems.Mu.Unlock()
 	}
@@ -211,21 +211,19 @@ func (c *Cache[K, V]) Delete(key K) {
 
 // DeleteAll deletes all items from the cache.
 func (c *Cache[K, V]) DeleteAll() {
-	if !c.options.lockingDisabledForTransaction {
+	if !c.options.locklessWhileInTransaction {
 		c.CacheItems.Mu.Lock()
 	}
 	c.evict(EvictionReasonDeleted)
-	if !c.options.lockingDisabledForTransaction {
+	if !c.options.locklessWhileInTransaction {
 		c.CacheItems.Mu.Unlock()
 	}
 }
 
 // DeleteExpired deletes all expired items from the cache.
 func (c *Cache[K, V]) DeleteExpired() {
-	if !c.options.lockingDisabledForTransaction {
-		c.CacheItems.Mu.Lock()
-		defer c.CacheItems.Mu.Unlock()
-	}
+	c.CacheItems.Mu.Lock()
+	defer c.CacheItems.Mu.Unlock()
 
 	if c.CacheItems.expQueue.isEmpty() {
 		return
@@ -248,11 +246,11 @@ func (c *Cache[K, V]) DeleteExpired() {
 // Its main purpose is to extend an item's expiration timestamp.
 // If the item is not found, the method is no-op.
 func (c *Cache[K, V]) Touch(key K) {
-	if !c.options.lockingDisabledForTransaction {
+	if !c.options.locklessWhileInTransaction {
 		c.CacheItems.Mu.Lock()
 	}
 	c.get(key, true)
-	if !c.options.lockingDisabledForTransaction {
+	if !c.options.locklessWhileInTransaction {
 		c.CacheItems.Mu.Unlock()
 	}
 }

@@ -17,11 +17,11 @@ func (fn optionFunc[K, V]) apply(opts *options[K, V]) {
 
 // options holds all available cache configuration options.
 type options[K comparable, V any] struct {
-	capacity                      uint64
-	ttl                           time.Duration
-	loader                        Loader[K, V]
-	disableTouchOnHit             bool
-	lockingDisabledForTransaction bool
+	capacity                   uint64
+	ttl                        time.Duration
+	loader                     Loader[K, V]
+	disableTouchOnHit          bool
+	locklessWhileInTransaction bool
 }
 
 // applyOptions applies the provided option values to the option struct.
